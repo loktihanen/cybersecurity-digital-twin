@@ -1,6 +1,9 @@
 # === Neo4j & KG Manipulation ===
 py2neo==2021.2.4
-rdflib==7.0.0
+rdflib==6.3.2
+
+
+
 python-Levenshtein==0.23.0
 fuzzywuzzy[speedup]==0.18.0
 
@@ -18,7 +21,7 @@ dgl==2.1.0
 networkx==3.2.1
 
 # === SHACL Validation ===
-pyshacl>=0.22.0,<0.24
+pyshacl==0.23.0
 
 # === Web UI (Streamlit) ===
 streamlit==1.34.0
