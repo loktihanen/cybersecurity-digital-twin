@@ -20,7 +20,7 @@ graph   = Graph(uri, auth=(user, pwd))
 matcher = NodeMatcher(graph)
 
 # Fichier CSV (par défaut)
-csv_path = sys.argv[1] if len(sys.argv) > 1 else "data/nessus_sample.csv"
+csv_path = "data/nessus-scan1.csv"
 if not os.path.exists(csv_path):
     raise FileNotFoundError(f"🚫 Fichier introuvable : {csv_path}")
 
