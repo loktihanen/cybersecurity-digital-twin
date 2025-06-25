@@ -1,73 +1,67 @@
-# ======================== 1. INSTALLATION ========================
-!pip install py2neo pandas rdflib python-Levenshtein
-
-# ======================== 2. IMPORTS ============================
+# ======================== 0. IMPORTS ========================
 import pandas as pd
 from py2neo import Graph, Node, Relationship, NodeMatcher
 from rdflib import Graph as RDFGraph, Namespace, RDF, RDFS, OWL, Literal
 from urllib.parse import quote_plus
 from datetime import datetime
-from google.colab import files
+import sys
+import os
 
-# ---------- utilitaire IRI ----------
+# ======================== 1. UTILS ========================
 def iri_fragment(txt: str) -> str:
     return quote_plus(txt.strip().replace("/", "_"))
 
-# ======================== 3. UPLOAD CSV =========================
-uploaded = files.upload()
-csv_path = list(uploaded.keys())[0]
-
-# ======================== 4. CONNEXION NEO4J =====================
-uri  = "neo4j+s://8d5fbce8.databases.neo4j.io"
-user = "neo4j"
-pwd  = "VpzGP3RDVB7AtQ1vfrQljYUgxw4VBzy0tUItWeRB9CM"
+# ======================== 2. CONFIG ========================
+# Connexion Neo4j (à remplacer par des variables d'environnement en production)
+uri = os.getenv("NEO4J_URI", "neo4j+s://8d5fbce8.databases.neo4j.io")
+user = os.getenv("NEO4J_USER", "neo4j")
+pwd  = os.getenv("NEO4J_PASSWORD", "VpzGP3RDVB7AtQ1vfrQljYUgxw4VBzy0tUItWeRB9CM")
 graph   = Graph(uri, auth=(user, pwd))
-matcher  = NodeMatcher(graph)
+matcher = NodeMatcher(graph)
 
-# ======================== 5. ONTOLOGIE STUCO =====================
-kg    = RDFGraph()
+# Fichier CSV (par défaut)
+csv_path = sys.argv[1] if len(sys.argv) > 1 else "data/nessus_sample.csv"
+if not os.path.exists(csv_path):
+    raise FileNotFoundError(f"🚫 Fichier introuvable : {csv_path}")
+
+# ======================== 3. ONTOLOGIE STUCO ========================
+kg = RDFGraph()
 STUCO = Namespace("http://w3id.org/sepses/vocab/ref/stuco#")
 CYBER = Namespace("http://example.org/cyber#")
 kg.bind("stuco", STUCO)
 kg.bind("cyber", CYBER)
 
-# Classes principales
 for lbl, uri_cls in [
     ("Host", CYBER.Host),
     ("Plugin", CYBER.Plugin),
     ("Service", CYBER.Service),
     ("CVE", STUCO.Vulnerability),
-    ("Source", CYBER.Source)  # ajout classe Source
+    ("Source", CYBER.Source)
 ]:
     kg.add((uri_cls, RDF.type, OWL.Class))
     kg.add((uri_cls, RDFS.label, Literal(lbl)))
 
-# Propriétés objet
 for lbl, prop in [
     ("hasPlugin", CYBER.hasPlugin),
     ("detects", CYBER.detects),
     ("runsService", CYBER.runsService),
     ("isVulnerableTo", CYBER.isVulnerableTo),
-    ("comesFrom", CYBER.comesFrom)  # ajout propriété comesFrom
+    ("comesFrom", CYBER.comesFrom)
 ]:
     kg.add((prop, RDF.type, OWL.ObjectProperty))
     kg.add((prop, RDFS.label, Literal(lbl)))
 
-# Instances des sources
 kg.add((CYBER["NVD"], RDF.type, CYBER.Source))
-kg.add((CYBER["NVD"], RDFS.label, Literal("NVD")))
 kg.add((CYBER["NESSUS"], RDF.type, CYBER.Source))
 kg.add((CYBER["NESSUS"], RDFS.label, Literal("NESSUS")))
 
-# ======================== 6. LECTURE + NORMALISATION CSV =========
+# ======================== 4. LECTURE + NORMALISATION CSV ========================
 df = pd.read_csv(csv_path)
 
-# a) uniforme : trim, lower, espace→_
 df.columns = (df.columns.str.strip()
                         .str.lower()
                         .str.replace(" ", "_"))
 
-# b) alias fréquents → nom canonique
 alias = {
     "pluginid":        "plugin_id",
     "plugin_id_":      "plugin_id",
@@ -79,11 +73,11 @@ alias = {
 df = df.rename(columns=alias)
 
 required = {"host", "plugin_name", "plugin_id", "port"}
-missing  = required - set(df.columns)
+missing = required - set(df.columns)
 if missing:
     raise ValueError(f"🚨 Colonnes manquantes dans le CSV : {missing}")
 
-# ======================== 7. INSERTION NEO4J + RDF ===============
+# ======================== 5. INSERTION NEO4J + RDF ========================
 now_iso = datetime.utcnow().isoformat()
 
 for _, r in df.iterrows():
@@ -113,35 +107,34 @@ for _, r in df.iterrows():
         tx.merge(n_serv, "Service", "name")
         tx.merge(Relationship(n_host, "RUNS_SERVICE", n_serv))
 
-    # CVE
     for cve in cves:
         n_cve = matcher.match("CVE", name=cve).first() or Node("CVE", name=cve, source="NESSUS")
         tx.merge(n_cve, "CVE", "name")
         tx.merge(Relationship(n_plugin, "DETECTS", n_cve))
         tx.merge(Relationship(n_host, "IS_VULNERABLE_TO", n_cve))
 
-        # RDF liens
+        # RDF
         resCVE = CYBER[f"CVE/{iri_fragment(cve)}"]
         kg.add((CYBER[f"Plugin/{iri_fragment(plug_id)}"], CYBER.detects, resCVE))
         kg.add((CYBER[f"Host/{iri_fragment(host_ip)}"], CYBER.isVulnerableTo, resCVE))
-        kg.add((resCVE, CYBER.comesFrom, CYBER["NESSUS"]))   # provenance explicite
+        kg.add((resCVE, CYBER.comesFrom, CYBER["NESSUS"]))
 
     tx.commit()
 
-    # RDF de base (hors boucle CVE)
     resH = CYBER[f"Host/{iri_fragment(host_ip)}"]
     resP = CYBER[f"Plugin/{iri_fragment(plug_id)}"]
     kg.add((resH, CYBER.hasPlugin, resP))
     if service:
         kg.add((resH, CYBER.runsService, CYBER[f"Service/{iri_fragment(service)}"]))
 
-# ======================== 8. EXPORT RDF ==========================
+# ======================== 6. EXPORT RDF ========================
 kg.serialize("kg2.ttl", format="turtle")
 print("✅ kg2.ttl généré (ontologie STUCO) et Neo4j mis à jour.")
 
-# ======================== 9. Post-traitement source NESSUS en Neo4j =
+# ======================== 7. FIX CVE sources ========================
 graph.run("""
 MATCH (c:CVE)<-[:DETECTS]-(:Plugin)<-[:HAS_PLUGIN]-(:Host)
 WHERE c.source IS NULL OR c.source <> 'NVD'
 SET c.source = 'NESSUS'
 """)
+
