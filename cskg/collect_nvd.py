@@ -1,3 +1,10 @@
+# === Ajouter au début
+import argparse, json
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--file", help="Fichier JSON contenant les CVEs à injecter")
+args = parser.parse_args()
+
 # ======================== 0. IMPORTS ========================
 from py2neo import Graph, Node, Relationship
 from transformers import pipeline
@@ -23,14 +30,14 @@ rdf_graph.bind("stuco", STUCO)
 rdf_graph.bind("cyber", CYBER)
 
 # RDF Classes declaration
-for label, uri in [
+for label, uri_ in [
     ("CVE", STUCO.Vulnerability),
     ("CWE", STUCO.Weakness),
     ("CPE", STUCO.Platform),
     ("Entity", CYBER.Entity)
 ]:
-    rdf_graph.add((uri, RDF.type, OWL.Class))
-    rdf_graph.add((uri, RDFS.label, Literal(label)))
+    rdf_graph.add((uri_, RDF.type, OWL.Class))
+    rdf_graph.add((uri_, RDFS.label, Literal(label)))
 
 rdf_graph.serialize(destination="kg1.ttl", format="turtle")
 
@@ -117,4 +124,14 @@ def pipeline_kg1(start=0, results_per_page=10):
 
 # ======================== 7. MAIN ========================
 if __name__ == "__main__":
-    pipeline_kg1(start=0, results_per_page=20)
+    if args.file:
+        with open(args.file, "r") as f:
+            data = json.load(f)
+        for item in data.get("vulnerabilities", []):
+            try:
+                insert_cve_neo4j(item)
+            except Exception as e:
+                print(f"[!] Erreur pour {item['cve']['id']}: {e}")
+    else:
+        pipeline_kg1(start=0, results_per_page=20)
+
