@@ -1,5 +1,7 @@
-# embedding/compare_models.py
+# 📊 compare_models.py (compatible avec align_kg.py)
+# Objectif : analyser la qualité des alignements SAME_AS entre KG1 et KG2 (NVD ↔ Nessus)
 
+import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -7,59 +9,84 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.manifold import TSNE
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
-import seaborn as sns
-import os
 
-# === CONFIGURATION ===
-ALIGN_FILE = "data/predictions/aligned_cves.csv"  # Fichier SAME_AS avec scores
-ROTATE_EMB_FILE = "data/triples/rotate_entity_embeddings.npy"  # Embeddings RotatE
-ENTITY_LABELS_FILE = "data/triples/entity_labels.csv"          # Mappage entités (nom -> id)
-OUTPUT_DIR = "outputs/analysis"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+# ==================== 1. CHARGEMENT DES ALIGNEMENTS ====================
+align_path = "data/predictions/aligned_cves.csv"
+if not os.path.exists(align_path):
+    raise FileNotFoundError("❌ Fichier aligned_cves.csv introuvable. Exécutez align_kg.py d'abord.")
 
-# === 1. Charger les alignements SAME_AS ===
-df_align = pd.read_csv(ALIGN_FILE)
-method_counts = df_align["method"].value_counts()
-print("\n▶️ Répartition des méthodes d'alignement :")
+align_df = pd.read_csv(align_path)
+print(f"\n📥 Alignements chargés : {len(align_df)} paires")
+
+# ==================== 2. STATS PAR MÉTHODE ====================
+print("\n📊 Méthodes d'alignement (distribution) :")
+method_counts = align_df['method'].value_counts()
 print(method_counts)
 
-# === 2. Charger les embeddings RotatE ===
-entity_emb = np.load(ROTATE_EMB_FILE)
-df_labels = pd.read_csv(ENTITY_LABELS_FILE)
-id2name = dict(zip(df_labels["id"], df_labels["label"]))
-name2id = {v: k for k, v in id2name.items()}
-
-# Filtrer uniquement les entités alignées
-aligned_names = set(df_align["CVE_KG1"]).union(set(df_align["CVE_KG2"]))
-aligned_ids = [name2id[name] for name in aligned_names if name in name2id]
-aligned_emb = entity_emb[aligned_ids]
-aligned_labels = [id2name[i] for i in aligned_ids]
-
-# === 3. Similarité cosine moyenne ===
-sim_matrix = cosine_similarity(aligned_emb)
-mean_sim = np.mean(sim_matrix)
-print(f"\n★ Similarité cosine moyenne (alignements) : {mean_sim:.4f}")
-
-# === 4. Clustering et silhouette ===
-kmeans = KMeans(n_clusters=5, random_state=42)
-labels = kmeans.fit_predict(aligned_emb)
-sil_score = silhouette_score(aligned_emb, labels)
-print(f"\n✨ Score de silhouette (k=5) : {sil_score:.4f}")
-
-# === 5. t-SNE pour visualisation ===
-tsne = TSNE(n_components=2, perplexity=30, random_state=42)
-tsne_emb = tsne.fit_transform(aligned_emb)
-
-plt.figure(figsize=(10, 7))
-sns.scatterplot(x=tsne_emb[:, 0], y=tsne_emb[:, 1], hue=labels, palette="Set2", s=50)
-plt.title("Visualisation t-SNE des CVE alignées")
-plt.legend(title="Cluster", loc="best")
+plt.figure()
+method_counts.plot(kind="bar", color='cornflowerblue')
+plt.title("Distribution des méthodes d'alignement")
+plt.ylabel("Nombre de paires")
 plt.tight_layout()
-plt.savefig(os.path.join(OUTPUT_DIR, "tsne_aligned_embeddings.png"))
-plt.show()
+os.makedirs("outputs/analysis", exist_ok=True)
+plt.savefig("outputs/analysis/alignment_distribution.png")
+plt.close()
 
-# === 6. Export clustering ===
-output_csv = os.path.join(OUTPUT_DIR, "aligned_clusters.csv")
-pd.DataFrame({"name": aligned_labels, "cluster": labels}).to_csv(output_csv, index=False)
-print(f"\n📄 Fichier CSV des clusters : {output_csv}")
-print(f"📸 Image t-SNE sauvegardée dans : {OUTPUT_DIR}/tsne_aligned_embeddings.png")
+# ==================== 3. SIMILARITÉ COSINE ====================
+print("\n📐 Calcul de la similarité cosine moyenne...")
+cosines = []
+for _, row in align_df.iterrows():
+    if isinstance(row['score'], (float, int)) and row['method'] == 'embedding':
+        cosines.append(row['score'] / 100.0)
+
+avg_cosine = np.mean(cosines) if cosines else 0.0
+print(f"✅ Similarité cosine moyenne (embedding) : {avg_cosine:.4f}")
+
+# ==================== 4. VISUALISATION t-SNE ====================
+print("\n🔍 Visualisation t-SNE des entités alignées...")
+from sentence_transformers import SentenceTransformer
+from py2neo import Graph, NodeMatcher
+
+# Connexion à Neo4j (si besoin)
+uri = os.getenv("NEO4J_URI", "neo4j+s://8d5fbce8.databases.neo4j.io")
+user = os.getenv("NEO4J_USER", "neo4j")
+password = os.getenv("NEO4J_PASSWORD", "VpzGP3RDVB7AtQ1vfrQljYUgxw4VBzy0tUItWeRB9CM")
+graph = Graph(uri, auth=(user, password))
+matcher = NodeMatcher(graph)
+
+model = SentenceTransformer("all-mpnet-base-v2")
+all_entities = list(set(align_df['CVE_KG1'].tolist() + align_df['CVE_KG2'].tolist()))
+
+texts = []
+for eid in all_entities:
+    node = matcher.match("CVE", name=eid).first()
+    if node:
+        texts.append(f"{eid} {node.get('description', '')}")
+    else:
+        texts.append(eid)
+
+embeddings = model.encode(texts, convert_to_numpy=True)
+
+tsne = TSNE(n_components=2, random_state=42, perplexity=30)
+tsne_emb = tsne.fit_transform(embeddings)
+plt.figure(figsize=(10, 6))
+plt.scatter(tsne_emb[:, 0], tsne_emb[:, 1], s=8, alpha=0.6)
+plt.title("t-SNE des entités alignées (Sentence-BERT)")
+plt.tight_layout()
+plt.savefig("outputs/analysis/tsne_embeddings.png")
+plt.close()
+
+# ==================== 5. CLUSTERING ET SCORE SILHOUETTE ====================
+print("\n🔗 KMeans + silhouette score...")
+kmeans = KMeans(n_clusters=5, random_state=42).fit(embeddings)
+sil_score = silhouette_score(embeddings, kmeans.labels_)
+print(f"🎯 Silhouette Score : {sil_score:.4f}")
+
+# ==================== 6. EXPORT DES RÉSULTATS ====================
+with open("outputs/analysis/summary.txt", "w") as f:
+    f.write("# Évaluation des alignements SAME_AS\n")
+    f.write(f"\n- Nombre total d'alignements : {len(align_df)}")
+    f.write(f"\n- Similarité cosine moyenne (embedding) : {avg_cosine:.4f}")
+    f.write(f"\n- Silhouette Score (k=5) : {sil_score:.4f}\n")
+
+print("\n✅ Analyse terminée. Export dans outputs/analysis/")
