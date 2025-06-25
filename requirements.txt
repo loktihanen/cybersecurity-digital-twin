@@ -18,7 +18,7 @@ dgl==2.1.0
 networkx==3.2.1
 
 # === SHACL Validation ===
-pyshacl==0.23.0
+pyshacl>=0.22.0,<0.24
 
 # === Web UI (Streamlit) ===
 streamlit==1.34.0
