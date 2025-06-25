@@ -1,4 +1,53 @@
-name: 📦 Update Knowledge Graphs
+#name: 📦 Update Knowledge Graphs
+
+#on:
+#  schedule:
+#    - cron: '0 4 * * *'  # Tous les jours à 4h UTC
+#  workflow_dispatch:     # Lancement manuel
+#  push:
+#    paths:
+ #     - 'cskg/**'
+    #  - '.github/workflows/update_kg.yml'
+
+#jobs:
+#  update-kg:
+#    runs-on: ubuntu-latest
+
+#    steps:
+#      - name: ⬇️ Checkout du code
+    #    uses: actions/checkout@v3
+
+     # - name: 🧱 Installer dépendances système (graphviz, cairo, etc.)
+      #  run: |
+       #   sudo apt-get update
+       #   sudo apt-get install -y \
+          #  libcairo2-dev \
+          #  libpango1.0-dev \
+          #  libgdk-pixbuf2.0-dev \
+         #   libffi-dev \
+          #  graphviz \
+           # build-essential
+
+      #- name: 🐍 Setup Python
+       # uses: actions/setup-python@v4
+       # with:
+        #  python-version: '3.11'
+
+      #- name: 📦 Installer les dépendances Python
+       # run: |
+        #  python -m pip install --upgrade pip
+       #   pip install -r requirements.txt
+
+      #- name: ⚙️ Exécuter le pipeline KG
+     #   run: |
+#          python cskg/collect_nvd.py
+       #   python cskg/extract_nessus.py
+      #    python cskg/align_kg.py
+        #  python cskg/fuse_kg.py
+      #    python cskg/update_neo4j.py
+
+
+name: 📦 Update & Monitor Cybersecurity Knowledge Graphs
 
 on:
   schedule:
@@ -7,10 +56,12 @@ on:
   push:
     paths:
       - 'cskg/**'
+      - 'digital_twin/monitor.py'
       - '.github/workflows/update_kg.yml'
 
 jobs:
   update-kg:
+    name: ⚙️ Pipeline CSKG complet
     runs-on: ubuntu-latest
 
     steps:
@@ -38,7 +89,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: ⚙️ Exécuter le pipeline KG
+      - name: ⚙️ Exécuter le pipeline KG (collect → fuse → update)
         run: |
           python cskg/collect_nvd.py
           python cskg/extract_nessus.py
@@ -46,3 +97,24 @@ jobs:
           python cskg/fuse_kg.py
           python cskg/update_neo4j.py
 
+  monitor-nvd:
+    name: 🔁 Monitor NVD for new CVEs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⬇️ Checkout du code
+        uses: actions/checkout@v3
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: 📦 Installer les dépendances Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🔁 Lancer le script de monitoring NVD
+        run: |
+          python digital_twin/monitor.py
