@@ -1,16 +1,12 @@
 # ======================== MONITORING CVE (NVD) ========================
 import requests
-import time
 import json
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
-import schedule
 
 # === CONFIGURATION ===
 LAST_CHECK_FILE = Path("digital_twin/last_check.txt")
-CHECK_INTERVAL_MINUTES = 60  # à modifier si besoin
-
 NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
 # === FONCTION : heure du dernier check
@@ -66,14 +62,7 @@ def run_monitoring():
     update_last_check_time()
     print("⏱️ Monitoring terminé.")
 
-# === PLANNING AVEC SCHEDULE (pour Windows)
-schedule.every(CHECK_INTERVAL_MINUTES).minutes.do(run_monitoring)
-
 if __name__ == "__main__":
-    print("🚀 Monitor actif — toutes les", CHECK_INTERVAL_MINUTES, "minutes.")
-    run_monitoring()  # première exécution immédiate
+    run_monitoring()
 
-    while True:
-        schedule.run_pending()
-        time.sleep(10)
 
